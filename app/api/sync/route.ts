@@ -4,19 +4,32 @@ import { fetchTransactionEmails } from '@/lib/gmail'
 import { parseEmailBatch } from '@/lib/openai'
 import { supabase } from '@/lib/supabase'
 
+export const maxDuration = 60
+
 export async function POST() {
     try {
         const session = await getServerSession(authOptions)
+        console.log('Session user:', session?.user?.email)
 
         if (!session?.accessToken) {
             return Response.json({ error: 'Not authenticated' }, { status: 401 })
         }
 
-        // Step 1: Fetch emails from Gmail
-        const emails = await fetchTransactionEmails(session.accessToken)
+        // Step 1: Get last synced timestamp
+        const { data: syncMeta } = await supabase
+            .from('sync_meta')
+            .select('last_synced_at')
+            .eq('id', 1)
+            .single()
+
+        const lastSyncedAt = syncMeta?.last_synced_at
+        console.log('Last synced at:', lastSyncedAt ?? 'Never — fetching from Jan 1')
+
+        // Step 2: Fetch emails from Gmail
+        const emails = await fetchTransactionEmails(session.accessToken, lastSyncedAt)
         console.log(`Fetched ${emails.length} emails`)
 
-        // Filter out emails already in Supabase
+        // Step 3: Filter out emails already in Supabase
         const { data: existingTxns } = await supabase
             .from('transactions')
             .select('email_id')
@@ -33,21 +46,14 @@ export async function POST() {
             return Response.json({ message: 'No new transactions to process', count: 0 })
         }
 
-        // Replace emails with only new ones
-        const emailsToProcess = newEmails
-
-        if (emails.length === 0) {
-            return Response.json({ message: 'No transaction emails found', count: 0 })
-        }
-
-        // Step 2: Batch emails in groups of 25
+        // Step 4: Batch emails in groups of 25
         const batchSize = 25
         const batches: any[] = []
-        for (let i = 0; i < emailsToProcess.length; i += batchSize) {
-            batches.push(emailsToProcess.slice(i, i + batchSize))
+        for (let i = 0; i < newEmails.length; i += batchSize) {
+            batches.push(newEmails.slice(i, i + batchSize))
         }
 
-        // Step 3: Parse each batch with OpenAI
+        // Step 5: Parse each batch with OpenAI
         let allTransactions: any[] = []
         for (const batch of batches) {
             const parsed = await parseEmailBatch(batch)
@@ -56,24 +62,31 @@ export async function POST() {
 
         console.log(`Parsed ${allTransactions.length} transactions`)
 
-        // Step 4: Save to Supabase (skip duplicates using email_id)
+        // Step 6: Save to Supabase
         let saved = 0
         for (const tx of allTransactions) {
-            console.log('Saving tx:', JSON.stringify(tx))
-            const { data, error } = await supabase
+            const { error } = await supabase
                 .from('transactions')
                 .upsert(tx, { onConflict: 'email_id' })
 
-            console.log('Supabase result:', data, error)
             if (error) console.error('Supabase error:', error)
             else saved++
         }
+
+        // Step 7: Update last synced timestamp
+        await supabase
+            .from('sync_meta')
+            .update({ last_synced_at: new Date().toISOString() })
+            .eq('id', 1)
+
+        console.log('Sync complete. Last synced updated to now.')
 
         return Response.json({
             message: 'Sync complete',
             emailsFetched: emails.length,
             transactionsParsed: allTransactions.length,
             transactionsSaved: saved,
+            lastSyncedAt: new Date().toISOString(),
         })
 
     } catch (error) {
