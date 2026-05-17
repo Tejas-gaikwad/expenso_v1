@@ -9,7 +9,9 @@ export const maxDuration = 60
 export async function POST() {
     try {
         const session = await getServerSession(authOptions)
-        console.log('Session user:', session?.user?.email)
+        // console.log('Session user:', session?.user?.email)
+        // console.log('Access token exists:', !!session?.accessToken)
+        // console.log('Full session:', JSON.stringify(session))
 
         if (!session?.accessToken) {
             return Response.json({ error: 'Not authenticated' }, { status: 401 })
@@ -23,11 +25,11 @@ export async function POST() {
             .single()
 
         const lastSyncedAt = syncMeta?.last_synced_at
-        console.log('Last synced at:', lastSyncedAt ?? 'Never — fetching from Jan 1')
+        // console.log('Last synced at:', lastSyncedAt ?? 'Never — fetching from Jan 1')
 
         // Step 2: Fetch emails from Gmail
         const emails = await fetchTransactionEmails(session.accessToken, lastSyncedAt)
-        console.log(`Fetched ${emails.length} emails`)
+        // console.log(`Fetched ${emails.length} emails`)
 
         // Step 3: Filter out emails already in Supabase
         const { data: existingTxns } = await supabase
@@ -36,7 +38,7 @@ export async function POST() {
 
         const existingIds = new Set(existingTxns?.map((t: any) => t.email_id) || [])
         const newEmails = emails.filter(e => !existingIds.has(e.id))
-        console.log(`New emails to process: ${newEmails.length} (skipped ${emails.length - newEmails.length} already saved)`)
+        // console.log(`New emails to process: ${newEmails.length} (skipped ${emails.length - newEmails.length} already saved)`)
 
         if (newEmails.length === 0) {
             await supabase
@@ -60,18 +62,24 @@ export async function POST() {
             allTransactions = [...allTransactions, ...parsed]
         }
 
-        console.log(`Parsed ${allTransactions.length} transactions`)
+        // console.log(`Parsed ${allTransactions.length} transactions`)
 
         // Step 6: Save to Supabase
         let saved = 0
         for (const tx of allTransactions) {
-            const { error } = await supabase
+            console.log('Saving tx:', tx.email_id, tx.amount, tx.date)
+            const { data, error } = await supabase
                 .from('transactions')
                 .upsert(tx, { onConflict: 'email_id' })
 
-            if (error) console.error('Supabase error:', error)
-            else saved++
+            if (error) {
+                console.error('Supabase save error:', JSON.stringify(error))
+            } else {
+                console.log('Saved successfully:', tx.email_id)
+                saved++
+            }
         }
+        // console.log(`Total saved: ${saved}/${allTransactions.length}`)
 
         // Step 7: Update last synced timestamp
         await supabase

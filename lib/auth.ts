@@ -8,6 +8,8 @@ export const authOptions = {
             authorization: {
                 params: {
                     scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly',
+                    access_type: 'offline',
+                    prompt: 'consent',
                 },
             },
         }),
@@ -19,16 +21,18 @@ export const authOptions = {
     secret: process.env.NEXTAUTH_SECRET,
     callbacks: {
         async signIn({ user }: any) {
-            const allowedEmails = [
-                'tejasgaikwad0504@gmail.com', // replace with your actual Gmail
-            ]
+            const allowedEmails = ['tejasgaikwad0504@gmail.com']
             return allowedEmails.includes(user.email)
         },
         async jwt({ token, account }: any) {
-            if (account) {
+            if (account?.access_token) {
                 token.accessToken = account.access_token
             }
             return token as any
         },
-    }
+        async session({ session, token }: any) {
+            session.accessToken = token.accessToken
+            return session
+        },
+    },
 }

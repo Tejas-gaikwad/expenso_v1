@@ -6,7 +6,7 @@ export async function GET() {
             .from('transactions')
             .select('*')
             .gte('date', '2026-01-01')
-            .lte('date', '2026-05-13')
+            .lte('date', '2026-12-31')
             .order('date', { ascending: false })
 
         if (error) throw error
